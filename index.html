@@ -505,9 +505,9 @@
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rulesTitle">
        <div class="sheet-body">
         <h2 id="rulesTitle">벽바둑2 규칙</h2>
-        <p>7×7 보드에서 사각말 1개와 원형말 1개로 겨루는 영역 싸움입니다. 각자 말 2개를 움직여 벽을 세우고, 내 말만 있는 영역의 칸 수가 점수가 됩니다.</p>
+        <p>7×7 보드에서 사각말과 원형말로 겨루는 영역 싸움입니다. 말을 움직여 벽을 세우고, 내 말만 있는 영역의 칸 수가 점수가 됩니다. 2명은 각자 사각말 2개와 원형말 2개(원형말은 모서리에 미리 배치), 3명은 각자 사각말 1개와 원형말 1개입니다.</p>
         <h3>1. 배치</h3>
-        <p>선플레이어부터 순서대로 사각말과 원형말 중 하나를 골라 빈 칸에 놓습니다. 두 번째 말은 역순으로 놓습니다. 2명: 빨강 → 파랑 → 파랑 → 빨강. 3명: 빨강 → 파랑 → 초록 → 초록 → 파랑 → 빨강.</p>
+        <p>2명: 원형말 2개씩은 모서리에 미리 놓여 있어요. 선플레이어부터 순서대로 사각말 2개씩만 빈 칸에 놓습니다. 두 번째 사각말은 역순으로 놓습니다. 빨강 → 파랑 → 파랑 → 빨강. 3명: 선플레이어부터 순서대로 사각말과 원형말 중 하나를 골라 빈 칸에 놓습니다. 두 번째 말은 역순으로 놓습니다. 빨강 → 파랑 → 초록 → 초록 → 파랑 → 빨강.</p>
         <h3>2. 이동</h3>
         <ul>
           <li>사각말: 상하좌우 한 방향으로 직선 1~2칸 움직입니다. 꺾을 수 없습니다.</li>
@@ -625,7 +625,7 @@
 
       function newState(players) {
         var n = players === 3 ? 3 : 2;
-        return {
+        var st = {
           players: n,
           stones: new Array(49).fill(0),
           hw: new Array(42).fill(0),
@@ -637,6 +637,13 @@
           dest: -1,
           selected: -1
         };
+        if (n === 2) {
+          // 2인: 원형말 4개는 모서리에 미리 배치 (대각선 같은 색)
+          // 왼쪽 위 빨강 원형(2), 오른쪽 위 파랑 원형(4),
+          // 왼쪽 아래 파랑 원형(4), 오른쪽 아래 빨강 원형(2)
+          st.stones[0] = 2; st.stones[6] = 4; st.stones[42] = 4; st.stones[48] = 2;
+        }
+        return st;
       }
       var S = newState(2);
       var setupShape = 1; // 배치 단계에서 놓을 말 모양 (1 사각, 2 원형) — 화면 전용 상태
@@ -680,24 +687,36 @@
           dest: dest >= 49 ? -1 : dest,
           selected: -1
         };
-        // 기본 무결성 검사: 색깔당 사각·원형 각 최대 1개, 총 2개
+        // 기본 무결성 검사
+        // 2인: 색깔당 사각 최대 2개·원형 2개 (원형은 모서리 고정). 3인: 각 최대 1개.
         var counts = {};
         for (var i = 0; i < 49; i++) {
           var v = st.stones[i];
           if (!v) continue;
           counts[v] = (counts[v] || 0) + 1;
-          if (counts[v] > 1) return null;
         }
-        var placed = 0;
+        var placed = 0, placedSq = 0;
         for (var p = 1; p <= players; p++) {
           var sq = counts[pieceCode(p, 1)] || 0;
           var ci = counts[pieceCode(p, 2)] || 0;
           placed += sq + ci;
-          if (st.phase !== "setup" && (sq !== 1 || ci !== 1)) return null;
+          placedSq += sq;
+          if (players === 2) {
+            if (sq > 2 || ci > 2) return null;
+            if (st.phase !== "setup" && (sq !== 2 || ci !== 2)) return null;
+          } else {
+            if (sq > 1 || ci > 1) return null;
+            if (st.phase !== "setup" && (sq !== 1 || ci !== 1)) return null;
+          }
+        }
+        if (players === 2 && st.phase === "setup") {
+          // 배치 단계에서는 원형말 4개가 모서리에 그대로 있어야 함
+          if (st.stones[0] !== 2 || st.stones[6] !== 4 || st.stones[42] !== 4 || st.stones[48] !== 2) return null;
         }
         if (st.turn > players) return null;
         if (st.phase === "setup") {
-          if (st.setupIdx !== placed) return null;
+          // 2인은 원형말 4개를 제외하고 사각말 개수만 setupIdx와 비교
+          if (players === 2 ? st.setupIdx !== placedSq : st.setupIdx !== placed) return null;
         } else if (st.setupIdx !== players * 2) {
           return null;
         }
@@ -943,18 +962,24 @@
         var out = [];
 
         // 배치 단계: 현재 차례인 플레이어가 이미 놓은 말 모양 파악 (사각/원형 자동 전환용)
+        // 2인은 사각말만 놓음 (원형말은 모서리에 미리 배치) — 모양 고정, 선택 UI 숨김
         var setupInfo = null;
         if (S.phase === "setup") {
           var cur0 = setupOrder(S.players)[S.setupIdx];
-          var hasSq0 = false, hasCi0 = false;
-          S.stones.forEach(function (v) {
-            if (v && piecePlayer(v) === cur0) {
-              if (pieceShape(v) === 1) hasSq0 = true; else hasCi0 = true;
-            }
-          });
-          if (hasSq0 && setupShape === 1) setupShape = 2;
-          if (hasCi0 && setupShape === 2) setupShape = 1;
-          setupInfo = { cur: cur0, hasSq: hasSq0, hasCi: hasCi0 };
+          if (S.players === 2) {
+            setupShape = 1;
+            setupInfo = { cur: cur0, hasSq: false, hasCi: true, fixedSquare: true };
+          } else {
+            var hasSq0 = false, hasCi0 = false;
+            S.stones.forEach(function (v) {
+              if (v && piecePlayer(v) === cur0) {
+                if (pieceShape(v) === 1) hasSq0 = true; else hasCi0 = true;
+              }
+            });
+            if (hasSq0 && setupShape === 1) setupShape = 2;
+            if (hasCi0 && setupShape === 2) setupShape = 1;
+            setupInfo = { cur: cur0, hasSq: hasSq0, hasCi: hasCi0, fixedSquare: false };
+          }
         }
 
         // 칸
@@ -1104,14 +1129,17 @@
         // 점수판
         $("scorebar").setAttribute("data-players", String(S.players));
         var placed = { 1: 0, 2: 0, 3: 0 };
-        S.stones.forEach(function (v) { if (v) placed[piecePlayer(v)]++; });
+        var placedSq = { 1: 0, 2: 0, 3: 0 };
+        S.stones.forEach(function (v) { if (v) { placed[piecePlayer(v)]++; if (pieceShape(v) === 1) placedSq[piecePlayer(v)]++; } });
         $("scoreRed").textContent = sc.score[1];
         $("scoreBlue").textContent = sc.score[2];
         $("scoreGreen").textContent = sc.score[3];
         if (S.phase === "setup") {
-          $("subRed").textContent = "놓을 말 " + (2 - placed[1]) + "개";
-          $("subBlue").textContent = "놓을 말 " + (2 - placed[2]) + "개";
-          $("subGreen").textContent = "놓을 말 " + (2 - placed[3]) + "개";
+          // 2인은 원형말이 미리 배치돼 있으니 남은 사각말만 셈
+          var rem = S.players === 2 ? placedSq : placed;
+          $("subRed").textContent = "놓을 말 " + (2 - rem[1]) + "개";
+          $("subBlue").textContent = "놓을 말 " + (2 - rem[2]) + "개";
+          $("subGreen").textContent = "놓을 말 " + (2 - rem[3]) + "개";
         } else {
           $("subRed").textContent = "가장 큰 영역 " + sc.biggest[1] + "칸";
           $("subBlue").textContent = "가장 큰 영역 " + sc.biggest[2] + "칸";
@@ -1132,9 +1160,9 @@
         var rmBtn = $("btnRematch");
         if (rmBtn) rmBtn.textContent = rt.rematchOut ? "요청 중…" : "한판 더하기";
 
-        // 배치 말 선택 UI
+        // 배치 말 선택 UI (2인은 사각 고정이라 숨김)
         var picker = $("setupPicker");
-        if (setupInfo) {
+        if (setupInfo && !setupInfo.fixedSquare) {
           picker.classList.add("show");
           $("btnShapeSquare").disabled = setupInfo.hasSq;
           $("btnShapeCircle").disabled = setupInfo.hasCi;
@@ -1195,7 +1223,8 @@
           if (S.stones[i] !== 0) { showHint("이미 말이 있는 칸입니다. 빈 칸을 눌러주세요."); return; }
           var order = setupOrder(S.players);
           var placer = order[S.setupIdx];
-          S.stones[i] = pieceCode(placer, setupShape);
+          // 2인은 사각말만 놓음 (원형말은 모서리에 미리 배치)
+          S.stones[i] = pieceCode(placer, S.players === 2 ? 1 : setupShape);
           S.setupIdx++;
           if (S.setupIdx >= S.players * 2) {
             S.phase = "move";
