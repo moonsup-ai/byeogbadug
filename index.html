@@ -290,6 +290,8 @@
         margin:6px 0;
       }
       .rt-btn2:active{ transform:translateY(1px); background:#352a20; }
+      .rt-btn2:disabled{ opacity:.45; cursor:default; }
+      .rt-tip{ font-size:.85rem; color:var(--muted); }
       .rt-btn2.primary{ background:#4d3a1e; border-color:var(--gold); color:#ffe1ae; }
       .rt-big-code{
         width:100%;
@@ -509,6 +511,7 @@
        <div class="sheet-body">
         <h2 id="rtTitle">실시간으로 같이 하기</h2>
         <p>4자리 방 코드를 알려주면 친구가 바로 들어와요. 대국 데이터는 두 폰끼리 직접 주고받아요. 연결돼 있는 동안 상대가 두는 수가 바로바로 보여요. 페이지를 닫으면 연결이 끊어져요. 실시간은 2명으로만 할 수 있어요.</p>
+        <p class="rt-tip">방 만든 사람은 친구가 들어올 때까지 이 페이지를 켜 두세요. 카톡 안에서 링크를 열면 연결이 안 될 수 있어요. 안 되면 사파리나 크롬 앱으로 링크를 열어보세요.</p>
         <p class="rt-state" id="rtConnState">연결 안 됨</p>
         <h3>1. 방 만들기 (호스트 · 빨강)</h3>
         <p>방을 만들면 4자리 방 코드가 생겨요. 코드를 탭하면 복사돼요.</p>
@@ -1294,11 +1297,16 @@
       /* ───────────────── 실시간 (WebRTC) ─────────────────
          기본은 4자리 방 코드 + PeerJS 무료 중계(0.peerjs.com): 중계는
          두 폰을 소개만 하고, 대국 데이터는 두 폰끼리 직접 주고받아요.
+         직접 연결이 안 될 땐 공개 TURN 릴레이(openrelay)를 거쳐요.
          중계가 안 되면 "직접 코드로 연결하기" 수동 SDP 방식을 쓰세요.
          상태는 기존 encode/decode 문자열 그대로 주고받습니다.
       ──────────────────────────────────────── */
-      var RT_STUN = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
-      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null, peer: null, conn: null, roomCode: "" };
+      var RT_ICE = [
+        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
+        { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }
+      ];
+      var RT_PEER_CONFIG = { iceServers: RT_ICE, sdpSemantics: "unified-plan" };
+      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null, peer: null, conn: null, roomCode: "", gen: 0, busy: false };
 
       function rtSetState(msg) {
         var el = $("rtConnState");
@@ -1369,7 +1377,7 @@
         rt.failTimer = setTimeout(function () {
           if (!rt.connected) {
             rt.waiting = false;
-            rtSetState("연결이 안 돼요. 코드를 다시 확인해 보세요. 안 되면 링크 공유 방식으로 두면 돼요.");
+            rtSetState("연결이 안 돼요. 네트워크가 폰끼리 직접 연결을 막고 있을 수 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
           }
         }, 30000);
       }
@@ -1377,9 +1385,27 @@
         if (rt.failTimer) { clearTimeout(rt.failTimer); rt.failTimer = null; }
         rt.waiting = false;
       }
+      function rtSetBusyButtons(dis) {
+        ["btnRtRoom", "btnRtJoinPeer", "btnRtHost", "btnRtJoin"].forEach(function (id) {
+          var b = $(id); if (b) b.disabled = dis;
+        });
+      }
+      function rtWatchIce(pc) {
+        try {
+          pc.addEventListener("iceconnectionstatechange", function () {
+            if (pc.iceConnectionState === "failed" && !rt.connected) {
+              rtStopFailTimer();
+              rtSetState("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 다른 네트워크(와이파이↔데이터)로 다시 시도해 보세요.");
+            }
+          });
+        } catch (e) { /* 무시 */ }
+      }
       function rtWireChannel(dc) {
         rt.dc = dc;
+        var myGen = rt.gen;
+        var opened = false;
         dc.onopen = function () {
+          opened = true;
           rt.connected = true;
           rtStopFailTimer();
           rtSetState("연결됨");
@@ -1392,7 +1418,15 @@
             if (msg && msg.t === "state" && typeof msg.s === "string") rtApplyState(msg.s);
           } catch (e) { /* 무시 */ }
         };
-        dc.onclose = function () { rtOnClosed(); };
+        dc.onclose = function () {
+          if (myGen !== rt.gen) return; // 연결 끊기 등 의도된 정리 뒤의 닫힘은 무시
+          if (!opened && !rt.connected) {
+            rtStopFailTimer();
+            rtSetState("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 다른 네트워크(와이파이↔데이터)로 다시 시도해 보세요.");
+            return;
+          }
+          rtOnClosed();
+        };
         dc.onerror = function () { /* onclose가 뒤따름 */ };
       }
       function rtOnClosed() {
@@ -1403,6 +1437,9 @@
         rtUpdateStatus();
       }
       function rtReset(keepRole) {
+        rt.gen++;
+        rt.busy = false;
+        rtSetBusyButtons(false);
         rtStopFailTimer();
         if (rt.dc) { try { rt.dc.close(); } catch (e) {} rt.dc = null; }
         if (rt.pc) { try { rt.pc.close(); } catch (e) {} rt.pc = null; }
@@ -1435,10 +1472,17 @@
       }
       function genRoomCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
       function isValidRoomCode(s) { return /^\d{4}$/.test(String(s == null ? "" : s).trim()); }
-      function rtWirePeerConn(conn) {
+      function rtWirePeerConn(conn, onSetupFail) {
         if (rt.connected && rt.conn && rt.conn !== conn) { try { conn.close(); } catch (e) {} return; }
         rt.conn = conn;
+        var myGen = rt.gen;
+        var opened = false;
+        function setupFail(msg) {
+          if (myGen !== rt.gen || opened || rt.connected) return;
+          if (onSetupFail) onSetupFail(msg);
+        }
         conn.on("open", function () {
+          opened = true;
           rt.connected = true;
           rtStopFailTimer();
           rtSetState("연결됨");
@@ -1450,31 +1494,72 @@
           try { msg = (typeof data === "string") ? JSON.parse(data) : data; } catch (e) { msg = null; }
           if (msg && msg.t === "state" && typeof msg.s === "string") rtApplyState(msg.s);
         });
-        conn.on("close", function () { rtOnClosed(); });
+        conn.on("close", function () {
+          if (myGen !== rt.gen) return; // 연결 끊기 등 의도된 정리 뒤의 닫힘은 무시
+          if (!opened && !rt.connected) {
+            setupFail("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+            return;
+          }
+          rtOnClosed();
+        });
         conn.on("error", function () { /* close가 뒤따름 */ });
+        try {
+          var pc = conn.peerConnection;
+          if (pc && pc.addEventListener) {
+            pc.addEventListener("iceconnectionstatechange", function () {
+              if (pc.iceConnectionState === "failed") setupFail("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+            });
+          }
+        } catch (e) { /* 구버전 PeerJS 등, ICE 감시 없이 진행 */ }
       }
       function rtCreateRoomPeerJS() {
         if (rt.connected) { showHint("이미 연결돼 있어요."); return; }
+        if (rt.busy) return;
+        rt.busy = true;
+        rtSetBusyButtons(true);
         rtSetState("방 만드는 중…");
         loadPeerJS().then(function () {
           rtReset(true);
+          rt.busy = true;
+          rtSetBusyButtons(true);
+          var myGen = rt.gen;
           rt.role = "host"; rt.myColor = 1;
           var tries = 0;
           (function tryCreate() {
+            if (myGen !== rt.gen) return;
             tries++;
             var code = genRoomCode();
-            var peer = new Peer(code);
+            var peer = new Peer(code, { config: RT_PEER_CONFIG });
             var opened = false;
             peer.on("open", function (id) {
+              if (myGen !== rt.gen) { try { peer.destroy(); } catch (e) {} return; }
               opened = true;
               rt.peer = peer;
               rt.roomCode = id;
               var rc = $("rtRoomCode"); if (rc) rc.textContent = id;
               rtSetState("방 코드가 만들어졌어요. 코드를 친구에게 알려주세요.");
+              rt.busy = false;
+              rtSetBusyButtons(false);
             });
-            peer.on("connection", function (conn) { rtWirePeerConn(conn); });
+            peer.on("connection", function (conn) {
+              if (myGen !== rt.gen) { try { conn.close(); } catch (e) {} return; }
+              rtWirePeerConn(conn, function () {
+                if (rt.conn === conn) rt.conn = null;
+                rtSetState("상대가 직접 연결하지 못했어요. 방 코드는 그대로예요. 친구에게 다시 들어와 달라고 해 주세요.");
+              });
+            });
+            peer.on("disconnected", function () {
+              if (myGen !== rt.gen || rt.peer !== peer) return;
+              try { peer.reconnect(); } catch (e) {}
+              if (!rt.connected) rtSetState("중계 서버와 연결이 끊겼어요. 다시 연결하는 중이에요… 방 코드는 그대로예요.");
+            });
             peer.on("error", function (err) {
-              if (opened) { rtSetState("연결 중에 문제가 생겼어요. 방을 다시 만들어 주세요."); return; }
+              if (myGen !== rt.gen) return;
+              if (opened) {
+                if (err && err.type === "network") { rtSetState("중계 서버와 연결이 끊겼어요. 다시 연결하는 중이에요…"); return; }
+                rtSetState("연결 중에 문제가 생겼어요. 방을 다시 만들어 주세요.");
+                return;
+              }
               try { peer.destroy(); } catch (e) {}
               if (err && err.type === "unavailable-id" && tries < 10) { tryCreate(); return; }
               rtSetState("방을 만들지 못했어요. 다시 시도해 주세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
@@ -1483,17 +1568,25 @@
           })();
         }).catch(function () {
           rtSetState("중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+          rt.busy = false;
+          rtSetBusyButtons(false);
         });
       }
       function rtJoinPeerJS() {
         if (rt.connected) { showHint("이미 연결돼 있어요."); return; }
+        if (rt.busy) return;
         var code = ($("rtJoinCode").value || "").replace(/\D/g, "").slice(0, 4);
         if (!isValidRoomCode(code)) { rtSetState("방 코드는 숫자 4자리예요. 코드를 다시 확인해 주세요."); return; }
+        rt.busy = true;
+        rtSetBusyButtons(true);
         rtSetState("방에 들어가는 중…");
         loadPeerJS().then(function () {
           rtReset(true);
+          rt.busy = true;
+          rtSetBusyButtons(true);
+          var myGen = rt.gen;
           rt.role = "guest"; rt.myColor = 2;
-          var peer = new Peer();
+          var peer = new Peer({ config: RT_PEER_CONFIG });
           var conn = null;
           var failed = false;
           function fail(msg) {
@@ -1503,25 +1596,32 @@
             rtReset(false);
           }
           peer.on("open", function () {
+            if (myGen !== rt.gen) { try { peer.destroy(); } catch (e) {} return; }
             rt.peer = peer;
             conn = peer.connect(code, { reliable: true });
-            rtWirePeerConn(conn);
+            rtWirePeerConn(conn, fail);
             rtStartFailTimer();
           });
           peer.on("error", function (err) {
+            if (myGen !== rt.gen) return;
             if (err && err.type === "peer-unavailable") fail("방 코드를 다시 확인해 주세요. 그런 방이 없어요.");
             else if (err && err.type === "network") fail("중계 서버에 닿지 않아요. 다시 시도해 주세요.");
           });
         }).catch(function () {
           rtSetState("중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+          rt.busy = false;
+          rtSetBusyButtons(false);
         });
       }
       function rtCreateRoom() {
         if (!window.RTCPeerConnection) { rtSetState("이 브라우저는 실시간 연결을 지원하지 않아요. 링크 공유 방식으로 두면 돼요."); return; }
+        if (rt.busy) return;
         rtReset(true);
+        rt.busy = true; rtSetBusyButtons(true);
         rt.role = "host"; rt.myColor = 1;
-        var pc = new RTCPeerConnection({ iceServers: RT_STUN });
+        var pc = new RTCPeerConnection({ iceServers: RT_ICE });
         rt.pc = pc;
+        rtWatchIce(pc);
         rtWireChannel(pc.createDataChannel("wallgo"));
         rtSetState("방 코드 만드는 중…");
         pc.createOffer().then(function (offer) {
@@ -1529,6 +1629,7 @@
         }).then(function () {
           $("rtHostCode").value = b64urlEncode(JSON.stringify({ sdp: pc.localDescription }));
           rtSetState("방 코드가 만들어졌어요. 복사해서 친구에게 보내고, 친구가 보내온 참가 코드를 아래에 붙여넣어 주세요.");
+          rt.busy = false; rtSetBusyButtons(false);
         }).catch(function () {
           rtSetState("방을 만들지 못했어요. 다시 시도해 주세요.");
           rtReset(false);
@@ -1539,10 +1640,13 @@
         try { offer = JSON.parse(b64urlDecode($("rtOfferIn").value)); } catch (e) { offer = null; }
         if (!offer || !offer.sdp) { rtSetState("방 코드가 올바르지 않아요. 코드를 다시 확인해 주세요."); return; }
         if (!window.RTCPeerConnection) { rtSetState("이 브라우저는 실시간 연결을 지원하지 않아요. 링크 공유 방식으로 두면 돼요."); return; }
+        if (rt.busy) return;
         rtReset(true);
+        rt.busy = true; rtSetBusyButtons(true);
         rt.role = "guest"; rt.myColor = 2;
-        var pc = new RTCPeerConnection({ iceServers: RT_STUN });
+        var pc = new RTCPeerConnection({ iceServers: RT_ICE });
         rt.pc = pc;
+        rtWatchIce(pc);
         pc.ondatachannel = function (ev) { rtWireChannel(ev.channel); };
         rtSetState("참가 코드 만드는 중…");
         pc.setRemoteDescription(offer.sdp).then(function () { return pc.createAnswer(); })
@@ -1551,6 +1655,7 @@
             $("rtGuestCode").value = b64urlEncode(JSON.stringify({ sdp: pc.localDescription }));
             rtStartFailTimer();
             rtSetState("참가 코드가 만들어졌어요. 복사해서 방 만든 사람에게 보내주세요. 연결될 때까지 기다려 주세요.");
+            rt.busy = false; rtSetBusyButtons(false);
           }).catch(function () {
             rtSetState("참가 코드를 만들지 못했어요. 방 코드를 다시 확인해 주세요.");
             rtReset(false);
