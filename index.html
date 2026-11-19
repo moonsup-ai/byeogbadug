@@ -544,7 +544,7 @@
        <div class="sheet-body">
         <p class="rt-inapp" id="rtInApp" hidden></p>
         <h2 id="rtTitle">실시간으로 같이 하기</h2>
-        <p>4자리 방 코드를 알려주면 친구가 바로 들어와요. 대국 데이터는 두 폰끼리 직접 주고받아요. 연결돼 있는 동안 상대가 두는 수가 바로바로 보여요. 페이지를 닫으면 연결이 끊어져요. 실시간은 2명으로만 할 수 있어요.</p>
+        <p>4자리 방 코드를 알려주면 친구가 바로 들어와요. 연결돼 있는 동안 상대가 두는 수가 바로바로 보여요. 페이지를 닫으면 연결이 끊어져요. 실시간은 2명으로만 할 수 있어요.</p>
         <p class="rt-tip">방 만든 사람은 친구가 들어올 때까지 이 페이지를 켜 두세요. 카톡 안에서 링크를 열면 연결이 안 될 수 있어요. 안 되면 사파리나 크롬 앱으로 링크를 열어보세요.</p>
         <button type="button" class="rt-btn2" id="btnRtCopyLink">이 페이지 링크 복사</button>
         <div class="rt-card" id="rtCard">
@@ -553,6 +553,8 @@
           <div class="rt-card-status"><span class="rt-dot" id="rtCardDot"></span><span class="rt-card-title" id="rtCardTitle">연결 안 됨</span></div>
           <p class="rt-card-note" id="rtCardNote">방을 만들거나 친구의 4자리 코드를 입력하세요.</p>
         </div>
+        <button type="button" class="rt-btn2 primary" id="btnRtRelay" hidden>중계로 연결하기 (웹소켓)</button>
+        <p class="rt-tip" id="rtRelayTip" hidden>직접 연결이 안 될 때 중계 서버를 거쳐 연결해요. 카톡 안에서도 돼요.</p>
         <h3>1. 방 만들기 (호스트 · 빨강)</h3>
         <p>방을 만들면 4자리 방 코드가 생겨요. 코드를 탭하면 복사돼요.</p>
         <button type="button" class="rt-btn2 primary" id="btnRtRoom">방 만들기</button>
@@ -1334,19 +1336,20 @@
         if (e.target === this) this.classList.remove("show");
       });
 
-      /* ───────────────── 실시간 (WebRTC) ─────────────────
+      /* ───────────────── 실시간 (WebRTC + 웹소켓 중계) ─────────────────
          기본은 4자리 방 코드 + PeerJS 무료 중계(0.peerjs.com): 중계는
          두 폰을 소개만 하고, 대국 데이터는 두 폰끼리 직접 주고받아요.
-         직접 연결이 안 될 땐 공개 TURN 릴레이(openrelay)를 거쳐요.
-         중계가 안 되면 "직접 코드로 연결하기" 수동 SDP 방식을 쓰세요.
+         직접 연결이 안 될 땐 웹소켓 중계(MQTT 공개 브로커)로 대국 데이터를
+         주고받아요. 중계가 안 되면 "직접 코드로 연결하기" 수동 SDP 방식을 쓰세요.
          상태는 기존 encode/decode 문자열 그대로 주고받습니다.
+         (TURN은 제거함 — 무료 공개 TURN은 릴레이 후보를 만들지 못해 죽은 설정이었음.
+         STUN만 남김.)
       ──────────────────────────────────────── */
       var RT_ICE = [
-        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
-        { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }
+        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }
       ];
       var RT_PEER_CONFIG = { iceServers: RT_ICE, sdpSemantics: "unified-plan" };
-      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null, peer: null, conn: null, roomCode: "", joinCode: "", gen: 0, busy: false, view: "idle", viewMsg: "" };
+      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null, peer: null, conn: null, roomCode: "", joinCode: "", gen: 0, busy: false, view: "idle", viewMsg: "", transport: null, mqtt: null, mqttConnected: false, relayFailed: false, relayTimer: null, relayNoRoomTimer: null, relayConnectTimer: null, relayGen: 0, clientId: "c" + Math.random().toString(36).slice(2, 10) };
 
       /* ── 연결 상태 카드: 상태는 rt.view 하나로 정하고,
          카드·메인 알림·버튼 활성화를 rtRenderStatus()에서 같이 갱신 ── */
@@ -1362,17 +1365,25 @@
       function rtViewTitle(key) {
         if (key === "waiting") return rt.role === "guest" ? "연결을 기다리는 중" : "방 만들어짐 — 친구가 들어오기를 기다리는 중";
         if (key === "joining") return rt.role === "host" ? "연결하는 중…" : "방에 들어가는 중…";
-        if (key === "connected") return rt.role === "host" ? "연결됨 — 친구가 들어왔어요" : "연결됨 — 방에 들어갔어요";
+        if (key === "connected") {
+          if (rt.transport === "relay") return rt.role === "host" ? "연결됨 — 친구가 중계로 들어왔어요" : "연결됨 — 중계로 방에 들어갔어요";
+          return rt.role === "host" ? "연결됨 — 친구가 들어왔어요" : "연결됨 — 방에 들어갔어요";
+        }
         if (key === "creating") return "방 만드는 중…";
         if (key === "failed") return "연결 실패";
         if (key === "closed") return "연결이 끊어졌어요";
         return "연결 안 됨";
       }
       function rtViewNote(key) {
-        if (rt.viewMsg) return rt.viewMsg;
-        if (key === "connected") return rt.role === "host" ? "이제 둘 수 있어요. 당신은 빨강(방 만든 사람)이에요." : "이제 둘 수 있어요. 당신은 파랑(들어간 사람)이에요.";
-        if (key === "closed" && rt.role === "host") return "방 코드는 그대로예요. 친구가 다시 들어올 수 있어요.";
-        return RT_VIEWS[key].note;
+        var note = "";
+        if (rt.viewMsg) note = rt.viewMsg;
+        else if (key === "connected") note = rt.transport === "relay"
+          ? (rt.role === "host" ? "중계로 연결됐어요. 이제 둘 수 있어요. 당신은 빨강(방 만든 사람)이에요." : "중계로 연결됐어요. 이제 둘 수 있어요. 당신은 파랑(들어간 사람)이에요.")
+          : (rt.role === "host" ? "이제 둘 수 있어요. 당신은 빨강(방 만든 사람)이에요." : "이제 둘 수 있어요. 당신은 파랑(들어간 사람)이에요.");
+        else if (key === "closed" && rt.role === "host") note = "방 코드는 그대로예요. 친구가 다시 들어올 수 있어요.";
+        else note = RT_VIEWS[key].note;
+        if (key === "waiting" && rt.relayFailed) note += " 중계 연결이 안 돼요. 직접 연결로만 기다리는 중이에요.";
+        return note;
       }
       function rtSetView(key, msg) {
         rt.view = key;
@@ -1398,20 +1409,26 @@
           if (rt.view === "creating") txt = "방 만드는 중…";
           else if (rt.view === "waiting") txt = rt.role === "guest" ? "연결 기다리는 중" : (rt.roomCode ? "방 " + rt.roomCode + " · 친구 기다리는 중" : "친구 기다리는 중");
           else if (rt.view === "joining") txt = rt.role === "host" ? "연결하는 중…" : "방에 들어가는 중…";
-          else if (rt.view === "connected") txt = "실시간 연결됨 · 당신은 " + (rt.role === "host" ? "빨강(방 만든 사람)" : "파랑(들어간 사람)");
+          else if (rt.view === "connected") txt = "실시간 연결됨" + (rt.transport === "relay" ? "(중계)" : "") + " · 당신은 " + (rt.role === "host" ? "빨강(방 만든 사람)" : "파랑(들어간 사람)");
           else if (rt.view === "failed") txt = "실시간 연결 실패";
           else if (rt.view === "closed") txt = "실시간 연결이 끊어졌어요";
           pill.hidden = !txt;
           pill.textContent = txt;
         }
         var locked = rt.busy || rt.connected;
-        ["btnRtRoom", "btnRtJoinPeer", "btnRtHost", "btnRtJoin", "btnRtConnect"].forEach(function (id) {
+        ["btnRtRoom", "btnRtJoinPeer", "btnRtHost", "btnRtJoin", "btnRtConnect", "btnRtRelay"].forEach(function (id) {
           var b = $(id); if (b) b.disabled = locked;
         });
         var jc = $("rtJoinCode"); if (jc) jc.disabled = locked;
         var dc = $("btnRtDisconnect"); if (dc) dc.classList.toggle("hot", rt.connected);
+        var rb = $("btnRtRelay");
+        if (rb) rb.hidden = !(rt.view === "failed" || (rt.view === "waiting" && rt.relayFailed));
+        var rtp = $("rtRelayTip");
+        if (rtp) rtp.hidden = !rb || rb.hidden;
       }
-      function rtOnConnected() {
+      function rtOnConnected(transport) {
+        rt.transport = transport || "direct";
+        if (rt.transport === "direct") rtDropRelayTransport();
         rt.connected = true;
         rtStopFailTimer();
         rtSetView("connected");
@@ -1439,14 +1456,16 @@
           setTimeout(finish, 10000);
         });
       }
+      function rtSend(payload) {
+        if (rt.conn && rt.conn.open) { try { rt.conn.send(payload); return; } catch (e) {} }
+        if (rt.dc && rt.dc.readyState === "open") { try { rt.dc.send(payload); return; } catch (e) {} }
+        if (rt.mqtt && rt.mqttConnected) {
+          var code = rt.role === "host" ? rt.roomCode : rt.joinCode;
+          if (code) { try { rt.mqtt.publish(rtRelayTopic(code), payload, { qos: 1, retain: false }); } catch (e) {} }
+        }
+      }
       function rtBroadcast() {
-        var payload = JSON.stringify({ t: "state", s: encode(S) });
-        if (rt.dc && rt.dc.readyState === "open") {
-          try { rt.dc.send(payload); } catch (e) { /* 무시 */ }
-        }
-        if (rt.conn && rt.conn.open) {
-          try { rt.conn.send(payload); } catch (e) { /* 무시 */ }
-        }
+        rtSend(JSON.stringify({ t: "state", s: encode(S), f: rt.clientId }));
       }
       function rtApplyState(code) {
         var st = decode(code);
@@ -1468,7 +1487,7 @@
         rt.failTimer = setTimeout(function () {
           if (!rt.connected) {
             rt.waiting = false;
-            rtSetView("failed", "연결이 안 돼요. 네트워크가 폰끼리 직접 연결을 막고 있을 수 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+            rtSetView("failed", "연결이 안 돼요. 아래 '중계로 연결하기' 버튼을 눌러보세요. 안 되면 '직접 코드로 연결하기'를 써 보세요.");
           }
         }, 30000);
       }
@@ -1477,7 +1496,7 @@
         rt.waiting = false;
       }
       function rtSetBusyButtons(dis) {
-        ["btnRtRoom", "btnRtJoinPeer", "btnRtHost", "btnRtJoin"].forEach(function (id) {
+        ["btnRtRoom", "btnRtJoinPeer", "btnRtHost", "btnRtJoin", "btnRtRelay"].forEach(function (id) {
           var b = $(id); if (b) b.disabled = dis;
         });
       }
@@ -1486,7 +1505,7 @@
           pc.addEventListener("iceconnectionstatechange", function () {
             if (pc.iceConnectionState === "failed" && !rt.connected) {
               rtStopFailTimer();
-              rtSetView("failed", "직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 다른 네트워크(와이파이↔데이터)로 다시 시도해 보세요.");
+              rtSetView("failed", "직접 연결이 안 돼요. 아래 '중계로 연결하기' 버튼을 눌러보세요.");
             }
           });
         } catch (e) { /* 무시 */ }
@@ -1497,7 +1516,7 @@
         var opened = false;
         dc.onopen = function () {
           opened = true;
-          rtOnConnected();
+          rtOnConnected("direct");
         };
         dc.onmessage = function (ev) {
           try {
@@ -1509,7 +1528,7 @@
           if (myGen !== rt.gen) return; // 연결 끊기 등 의도된 정리 뒤의 닫힘은 무시
           if (!opened && !rt.connected) {
             rtStopFailTimer();
-            rtSetView("failed", "직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 다른 네트워크(와이파이↔데이터)로 다시 시도해 보세요.");
+            rtSetView("failed", "직접 연결이 안 돼요. 아래 '중계로 연결하기' 버튼을 눌러보세요.");
             return;
           }
           rtOnClosed();
@@ -1527,6 +1546,9 @@
         rt.gen++;
         rt.busy = false;
         rtSetBusyButtons(false);
+        rtDropRelayTransport();
+        rt.transport = null;
+        rt.relayFailed = false;
         rtStopFailTimer();
         if (rt.dc) { try { rt.dc.close(); } catch (e) {} rt.dc = null; }
         if (rt.pc) { try { rt.pc.close(); } catch (e) {} rt.pc = null; }
@@ -1557,6 +1579,229 @@
           })();
         });
       }
+      /* ── 웹소켓 중계 (MQTT 공개 브로커) ──
+         직접 WebRTC가 안 될 때의 폴백. WSS라 카톡 인앱브라우저에서도 됨.
+         토픽은 byeogbadug/<4자리 코드>, QoS 1, retain false.
+         메시지는 WebRTC와 같은 JSON 문자열 {t, s, f} (f는 자기 메시지 에코 무시용).
+         presence: 호스트 hello / 게스트 join. 나감: bye (끊기 버튼 + 유언장).
+         주의: 코드를 아는 사람은 토픽을 구독해 대국 상태를 볼 수 있음.
+         캐주얼 보드게임이고 민감한 데이터가 없어서 괜찮은 수준. */
+      var MQTTJS_URLS = [
+        "https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.3/mqtt.min.js",
+        "https://unpkg.com/mqtt/dist/mqtt.min.js"
+      ];
+      var MQTT_BROKERS = [
+        "wss://broker.emqx.io:8084/mqtt",
+        "wss://broker.hivemq.com:8884/mqtt"
+      ];
+      var RT_RELAY_CONNECT_MS = 10000;
+      var RT_RELAY_NOROOM_MS = 10000;
+      var RT_RELAY_HELLO_MS = 2000;
+      function loadMqtt() {
+        return new Promise(function (resolve, reject) {
+          if (window.mqtt) { resolve(); return; }
+          var i = 0;
+          (function next() {
+            if (i >= MQTTJS_URLS.length) { reject(new Error("mqtt load fail")); return; }
+            var s = document.createElement("script");
+            s.src = MQTTJS_URLS[i++];
+            s.onload = function () { if (window.mqtt) resolve(); else next(); };
+            s.onerror = next;
+            document.head.appendChild(s);
+          })();
+        });
+      }
+      function rtRelayTopic(code) { return "byeogbadug/" + code; }
+      function rtRelaySayHello() {
+        if (!rt.mqtt || !rt.mqttConnected) return;
+        var code = rt.role === "host" ? rt.roomCode : rt.joinCode;
+        if (!code) return;
+        try { rt.mqtt.publish(rtRelayTopic(code), JSON.stringify({ t: "hello", f: rt.clientId }), { qos: 1, retain: false }); } catch (e) {}
+      }
+      function rtRelaySayJoin() {
+        if (!rt.mqtt || !rt.mqttConnected) return;
+        if (!rt.joinCode) return;
+        try { rt.mqtt.publish(rtRelayTopic(rt.joinCode), JSON.stringify({ t: "join", f: rt.clientId }), { qos: 1, retain: false }); } catch (e) {}
+      }
+      function rtStopRelayPresence() {
+        if (rt.relayTimer) { clearInterval(rt.relayTimer); rt.relayTimer = null; }
+        if (rt.relayNoRoomTimer) { clearTimeout(rt.relayNoRoomTimer); rt.relayNoRoomTimer = null; }
+      }
+      function rtRelayBeginPresence(role) {
+        rtStopRelayPresence();
+        if (rt.connected) return;
+        var gen = rt.relayGen;
+        if (role === "host") {
+          rtRelaySayHello();
+          rt.relayTimer = setInterval(function () {
+            if (gen !== rt.relayGen || rt.connected || !rt.mqttConnected) { rtStopRelayPresence(); return; }
+            rtRelaySayHello();
+          }, RT_RELAY_HELLO_MS);
+        } else {
+          rtRelaySayJoin();
+          rt.relayTimer = setInterval(function () {
+            if (gen !== rt.relayGen || rt.connected || !rt.mqttConnected) { rtStopRelayPresence(); return; }
+            rtRelaySayJoin();
+          }, RT_RELAY_HELLO_MS);
+          rt.relayNoRoomTimer = setTimeout(function () {
+            if (gen !== rt.relayGen || rt.connected) return;
+            rtRelayFail("중계에 그런 방이 없어요. 방 만든 사람이 페이지를 켜 두고 있는지 확인해 주세요.");
+          }, RT_RELAY_NOROOM_MS);
+        }
+      }
+      function rtRelayFail(msg) {
+        rtStopRelayPresence();
+        rtDropRelayTransport();
+        rt.busy = false;
+        rtSetBusyButtons(false);
+        rtSetView("failed", msg);
+      }
+      function rtDropPeerTransport() {
+        rt.gen++;
+        if (rt.conn) { try { rt.conn.close(); } catch (e) {} rt.conn = null; }
+        if (rt.peer) { try { rt.peer.destroy(); } catch (e) {} rt.peer = null; }
+      }
+      function rtDropRelayTransport() {
+        rt.relayGen++;
+        rtStopRelayPresence();
+        if (rt.relayConnectTimer) { clearTimeout(rt.relayConnectTimer); rt.relayConnectTimer = null; }
+        if (rt.mqtt) { try { rt.mqtt.end(false, {}, function () {}); } catch (e) {} rt.mqtt = null; }
+        rt.mqttConnected = false;
+      }
+      function rtOnRelayConnected() {
+        if (rt.connected) return;
+        rt.transport = "relay";
+        rtStopRelayPresence();
+        rtDropPeerTransport();
+        rtOnConnected("relay");
+      }
+      function rtOnRelayMessage(payload) {
+        var msg = null;
+        try { msg = JSON.parse(typeof payload === "string" ? payload : payload.toString()); } catch (e) { return; }
+        if (!msg || msg.f === rt.clientId) return; // 자기 메시지 에코 무시
+        if (msg.t === "state" && typeof msg.s === "string") { rtApplyState(msg.s); return; }
+        if (msg.t === "join" && rt.role === "host" && !rt.connected) {
+          rtRelaySayHello();
+          rtOnRelayConnected();
+          return;
+        }
+        if (msg.t === "hello" && rt.role === "guest" && !rt.connected) {
+          rtOnRelayConnected();
+          return;
+        }
+        if (msg.t === "bye" && rt.connected && rt.transport === "relay") {
+          rtDropRelayTransport();
+          rt.connected = false;
+          rtStopFailTimer();
+          rtSetView("closed", "상대가 연결을 끊었어요.");
+          showHint("상대가 연결을 끊었어요.");
+          return;
+        }
+      }
+      function rtRelayConnect(role, code, onFail, onReady) {
+        rtDropRelayTransport();
+        var myRelayGen = rt.relayGen;
+        loadMqtt().then(function () {
+          if (myRelayGen !== rt.relayGen) return;
+          var bi = 0;
+          (function tryBroker() {
+            if (myRelayGen !== rt.relayGen) return;
+            if (bi >= MQTT_BROKERS.length) { onFail("중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요."); return; }
+            var url = MQTT_BROKERS[bi++];
+            var topic = rtRelayTopic(code);
+            var client = mqtt.connect(url, {
+              connectTimeout: RT_RELAY_CONNECT_MS,
+              reconnectPeriod: 2000,
+              clean: true,
+              clientId: rt.clientId + "-" + role + "-" + myRelayGen,
+              will: { topic: topic, payload: JSON.stringify({ t: "bye", f: rt.clientId }), qos: 1, retain: false }
+            });
+            rt.mqtt = client;
+            rt.relayConnectTimer = setTimeout(function () {
+              if (myRelayGen !== rt.relayGen) return;
+              try { client.end(true); } catch (e) {}
+              if (rt.mqtt === client) rt.mqtt = null;
+              tryBroker();
+            }, RT_RELAY_CONNECT_MS);
+            client.on("connect", function () {
+              if (myRelayGen !== rt.relayGen || rt.mqtt !== client) return;
+              if (rt.relayConnectTimer) { clearTimeout(rt.relayConnectTimer); rt.relayConnectTimer = null; }
+              rt.mqttConnected = true;
+              rt.relayFailed = false;
+              client.subscribe(topic, { qos: 1 }, function (err) {
+                if (myRelayGen !== rt.relayGen || rt.mqtt !== client) return;
+                if (err) {
+                  try { client.end(true); } catch (e) {}
+                  if (rt.mqtt === client) rt.mqtt = null;
+                  tryBroker();
+                  return;
+                }
+                if (onReady) onReady();
+                if (rt.connected && rt.transport === "relay") {
+                  if (rt.role === "host") rtBroadcast();
+                  return;
+                }
+                rtRelayBeginPresence(role);
+              });
+            });
+            client.on("message", function (t, payload) {
+              if (myRelayGen !== rt.relayGen || rt.mqtt !== client) return;
+              rtOnRelayMessage(payload);
+            });
+            client.on("error", function () { /* 접속 타임아웃·재시도가 처리 */ });
+            client.on("close", function () {
+              if (myRelayGen !== rt.relayGen || rt.mqtt !== client) return;
+              rt.mqttConnected = false;
+            });
+          })();
+        }).catch(function () {
+          if (myRelayGen !== rt.relayGen) return;
+          onFail("중계 라이브러리를 불러오지 못했어요. 네트워크를 확인해 주세요.");
+        });
+      }
+      function rtRelayHostStart() {
+        if (!rt.roomCode) return;
+        rt.relayFailed = false;
+        rtRelayConnect("host", rt.roomCode, function () {
+          rt.relayFailed = true;
+          rtRenderStatus();
+        });
+      }
+      function rtRelayJoin() {
+        if (rt.connected) { showHint("이미 연결돼 있어요."); return; }
+        if (rt.busy) return;
+        var inputCode = ($("rtJoinCode").value || "").replace(/\D/g, "").slice(0, 4);
+        if (rt.role === "host" && rt.roomCode) {
+          rt.busy = true; rtSetBusyButtons(true);
+          rtSetView("waiting", "중계로 기다리는 중이에요. 친구가 중계로 들어오면 연결돼요.");
+          rtRelayConnect("host", rt.roomCode, function () {
+            rt.relayFailed = true;
+            rt.busy = false; rtSetBusyButtons(false);
+            rtSetView("waiting", "중계 연결이 안 돼요. 직접 연결로만 기다리는 중이에요.");
+          }, function () { rt.busy = false; rtSetBusyButtons(false); });
+          return;
+        }
+        var code = "";
+        if (isValidRoomCode(inputCode)) code = inputCode;
+        else if (rt.role === "guest" && rt.joinCode) code = rt.joinCode;
+        if (isValidRoomCode(code)) {
+          rt.joinCode = code;
+          rtReset(true);
+          rt.role = "guest"; rt.myColor = 2;
+          rt.busy = true; rtSetBusyButtons(true);
+          rtSetView("joining", "중계로 방에 들어가는 중…");
+          rtRelayConnect("guest", code, function (msg) { rtRelayFail(msg); });
+          return;
+        }
+        var fresh = genRoomCode();
+        rtReset(true);
+        rt.role = "host"; rt.myColor = 1;
+        rt.roomCode = fresh;
+        var rc = $("rtRoomCode"); if (rc) rc.textContent = fresh;
+        rt.busy = true; rtSetBusyButtons(true);
+        rtSetView("waiting", "중계 방을 만들었어요. 코드 " + fresh + "를 친구에게 알려주세요.");
+        rtRelayConnect("host", fresh, function (msg) { rtRelayFail(msg); }, function () { rt.busy = false; rtSetBusyButtons(false); });
+      }
       function genRoomCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
       function isValidRoomCode(s) { return /^\d{4}$/.test(String(s == null ? "" : s).trim()); }
       function rtWirePeerConn(conn, onSetupFail) {
@@ -1570,7 +1815,7 @@
         }
         conn.on("open", function () {
           opened = true;
-          rtOnConnected();
+          rtOnConnected("direct");
         });
         conn.on("data", function (data) {
           var msg = null;
@@ -1580,7 +1825,7 @@
         conn.on("close", function () {
           if (myGen !== rt.gen) return; // 연결 끊기 등 의도된 정리 뒤의 닫힘은 무시
           if (!opened && !rt.connected) {
-            setupFail("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+            setupFail("직접 연결이 안 돼요. 아래 '중계로 연결하기' 버튼을 눌러보세요.");
             return;
           }
           rtOnClosed();
@@ -1590,7 +1835,7 @@
           var pc = conn.peerConnection;
           if (pc && pc.addEventListener) {
             pc.addEventListener("iceconnectionstatechange", function () {
-              if (pc.iceConnectionState === "failed") setupFail("직접 연결이 안 돼요. 네트워크가 폰끼리 연결을 막고 있어요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+              if (pc.iceConnectionState === "failed") setupFail("직접 연결이 안 돼요. 아래 '중계로 연결하기' 버튼을 눌러보세요.");
             });
           }
         } catch (e) { /* 구버전 PeerJS 등, ICE 감시 없이 진행 */ }
@@ -1623,12 +1868,13 @@
               rtSetView("waiting", "방 코드가 만들어졌어요. 코드를 친구에게 알려주세요.");
               rt.busy = false;
               rtSetBusyButtons(false);
+              rtRelayHostStart();
             });
             peer.on("connection", function (conn) {
               if (myGen !== rt.gen) { try { conn.close(); } catch (e) {} return; }
               rtWirePeerConn(conn, function () {
                 if (rt.conn === conn) rt.conn = null;
-                rtSetView("waiting", "상대가 직접 연결하지 못했어요. 방 코드는 그대로예요. 친구에게 다시 들어와 달라고 해 주세요.");
+                rtSetView("waiting", "상대가 직접 연결하지 못했어요. 방 코드는 그대로예요. 친구에게 '중계로 연결하기'를 눌러달라고 해 주세요.");
               });
             });
             peer.on("disconnected", function () {
@@ -1646,11 +1892,11 @@
               try { peer.destroy(); } catch (e) {}
               if (err && err.type === "unavailable-id" && tries < 10) { tryCreate(); return; }
               rtReset(false);
-              rtSetView("failed", "방을 만들지 못했어요. 다시 시도해 주세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
+              rtSetView("failed", "방을 만들지 못했어요. '중계로 연결하기' 버튼으로 중계 방을 만들어 보세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
             });
           })();
         }).catch(function () {
-          rtSetView("failed", "중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+          rtSetView("failed", "중계 서버에 닿지 않아요. '중계로 연결하기' 버튼으로 중계 연결을 시도해 보세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
           rt.busy = false;
           rtSetBusyButtons(false);
         });
@@ -1692,7 +1938,7 @@
             else if (err && err.type === "network") fail("중계 서버에 닿지 않아요. 다시 시도해 주세요.");
           });
         }).catch(function () {
-          rtSetView("failed", "중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+          rtSetView("failed", "중계 서버에 닿지 않아요. '중계로 연결하기' 버튼으로 중계 연결을 시도해 보세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
           rt.busy = false;
           rtSetBusyButtons(false);
         });
@@ -1758,6 +2004,10 @@
         });
       }
       function rtDisconnect() {
+        if (rt.mqtt && rt.mqttConnected) {
+          var code = rt.role === "host" ? rt.roomCode : rt.joinCode;
+          if (code) { try { rt.mqtt.publish(rtRelayTopic(code), JSON.stringify({ t: "bye", f: rt.clientId }), { qos: 1, retain: false }); } catch (e) {} }
+        }
         rtReset(false);
         $("rtHostCode").value = "";
         $("rtAnswerIn").value = "";
@@ -1859,6 +2109,7 @@
       $("btnRtCopyGuest").addEventListener("click", function () { rtCopy("rtGuestCode"); });
       $("btnRtRoom").addEventListener("click", rtCreateRoomPeerJS);
       $("btnRtJoinPeer").addEventListener("click", rtJoinPeerJS);
+      $("btnRtRelay").addEventListener("click", rtRelayJoin);
       $("btnRtCopyRoom").addEventListener("click", rtCopyRoom);
       $("btnRtCopyLink").addEventListener("click", rtCopyPageLink);
       $("rtRoomCode").addEventListener("click", rtCopyRoom);
