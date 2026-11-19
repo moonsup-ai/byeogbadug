@@ -291,6 +291,41 @@
       }
       .rt-btn2:active{ transform:translateY(1px); background:#352a20; }
       .rt-btn2.primary{ background:#4d3a1e; border-color:var(--gold); color:#ffe1ae; }
+      .rt-big-code{
+        width:100%;
+        text-align:center;
+        font-size:2.6rem;
+        font-weight:800;
+        letter-spacing:.35em;
+        text-indent:.35em;
+        color:var(--gold);
+        background:#171209;
+        border:1px solid var(--gold);
+        border-radius:12px;
+        padding:14px 8px;
+        margin:6px 0 4px;
+        cursor:pointer;
+        user-select:none;
+        -webkit-user-select:none;
+      }
+      .rt-big-code:active{ background:#241a0c; }
+      .rt-join{
+        width:100%;
+        text-align:center;
+        font-size:1.6rem;
+        font-weight:800;
+        letter-spacing:.5em;
+        text-indent:.5em;
+        font-family:ui-monospace, "SF Mono", Menlo, monospace;
+        background:#171209;
+        color:#e8dfc9;
+        border:1px solid var(--panel-line);
+        border-radius:10px;
+        padding:10px;
+        margin:6px 0 4px;
+      }
+      .rt-manual{ margin-top:14px; border-top:1px solid var(--panel-line); padding-top:6px; }
+      .rt-manual summary{ cursor:pointer; font-weight:700; color:var(--muted); font-size:.9rem; padding:6px 0; }
       /* ── 규칙 모달 ────────────────────────── */
       .overlay{
         position:fixed; inset:0;
@@ -473,26 +508,39 @@
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rtTitle">
        <div class="sheet-body">
         <h2 id="rtTitle">실시간으로 같이 하기</h2>
-        <p>서버 없이 두 폰이 직접 연결돼요. 한쪽이 방을 만들고 코드를 보내면, 다른 쪽이 그 코드로 들어와요. 연결돼 있는 동안 상대가 두는 수가 바로바로 보여요. 페이지를 닫으면 연결이 끊어져요. 실시간은 2명으로만 할 수 있어요.</p>
+        <p>4자리 방 코드를 알려주면 친구가 바로 들어와요. 대국 데이터는 두 폰끼리 직접 주고받아요. 연결돼 있는 동안 상대가 두는 수가 바로바로 보여요. 페이지를 닫으면 연결이 끊어져요. 실시간은 2명으로만 할 수 있어요.</p>
         <p class="rt-state" id="rtConnState">연결 안 됨</p>
         <h3>1. 방 만들기 (호스트 · 빨강)</h3>
-        <p>방을 만들면 방 코드가 생겨요. 복사해서 친구에게 보내주세요.</p>
-        <button type="button" class="rt-btn2 primary" id="btnRtHost">방 만들기</button>
-        <label class="rt-label" for="rtHostCode">내 방 코드</label>
-        <textarea class="rt-code" id="rtHostCode" readonly rows="4" placeholder="방 만들기를 누르면 여기에 코드가 생겨요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
-        <button type="button" class="rt-btn2" id="btnRtCopyHost">방 코드 복사</button>
-        <label class="rt-label" for="rtAnswerIn">친구가 보내온 참가 코드</label>
-        <textarea class="rt-code" id="rtAnswerIn" rows="4" placeholder="친구가 보내온 참가 코드를 여기에 붙여넣어 주세요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
-        <button type="button" class="rt-btn2 primary" id="btnRtConnect">연결하기</button>
+        <p>방을 만들면 4자리 방 코드가 생겨요. 코드를 탭하면 복사돼요.</p>
+        <button type="button" class="rt-btn2 primary" id="btnRtRoom">방 만들기</button>
+        <div class="rt-big-code" id="rtRoomCode" role="button" tabindex="0" aria-label="방 코드, 탭하면 복사돼요">----</div>
+        <button type="button" class="rt-btn2" id="btnRtCopyRoom">방 코드 복사</button>
         <h3>2. 코드로 참가하기 (게스트 · 파랑)</h3>
-        <p>친구가 보내준 방 코드를 붙여넣으면 참가 코드가 생겨요.</p>
-        <label class="rt-label" for="rtOfferIn">친구의 방 코드</label>
-        <textarea class="rt-code" id="rtOfferIn" rows="4" placeholder="친구가 보내준 방 코드를 여기에 붙여넣어 주세요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
-        <button type="button" class="rt-btn2 primary" id="btnRtJoin">참가 코드 만들기</button>
-        <label class="rt-label" for="rtGuestCode">내 참가 코드</label>
-        <textarea class="rt-code" id="rtGuestCode" readonly rows="4" placeholder="참가 코드 만들기를 누르면 여기에 코드가 생겨요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
-        <button type="button" class="rt-btn2" id="btnRtCopyGuest">참가 코드 복사</button>
+        <p>친구가 알려준 4자리 방 코드를 입력하세요.</p>
+        <label class="rt-label" for="rtJoinCode">방 코드 4자리</label>
+        <input class="rt-join" id="rtJoinCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="1234" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button type="button" class="rt-btn2 primary" id="btnRtJoinPeer">방에 들어가기</button>
         <button type="button" class="rt-btn2" id="btnRtDisconnect">연결 끊기</button>
+        <details class="rt-manual" id="rtManualBox">
+          <summary>직접 코드로 연결하기 (4자리 코드가 안 될 때)</summary>
+          <h3>1. 방 만들기 (호스트 · 빨강)</h3>
+          <p>방을 만들면 방 코드가 생겨요. 복사해서 친구에게 보내주세요.</p>
+          <button type="button" class="rt-btn2 primary" id="btnRtHost">방 만들기</button>
+          <label class="rt-label" for="rtHostCode">내 방 코드</label>
+          <textarea class="rt-code" id="rtHostCode" readonly rows="4" placeholder="방 만들기를 누르면 여기에 코드가 생겨요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+          <button type="button" class="rt-btn2" id="btnRtCopyHost">방 코드 복사</button>
+          <label class="rt-label" for="rtAnswerIn">친구가 보내온 참가 코드</label>
+          <textarea class="rt-code" id="rtAnswerIn" rows="4" placeholder="친구가 보내온 참가 코드를 여기에 붙여넣어 주세요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+          <button type="button" class="rt-btn2 primary" id="btnRtConnect">연결하기</button>
+          <h3>2. 코드로 참가하기 (게스트 · 파랑)</h3>
+          <p>친구가 보내준 방 코드를 붙여넣으면 참가 코드가 생겨요.</p>
+          <label class="rt-label" for="rtOfferIn">친구의 방 코드</label>
+          <textarea class="rt-code" id="rtOfferIn" rows="4" placeholder="친구가 보내준 방 코드를 여기에 붙여넣어 주세요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+          <button type="button" class="rt-btn2 primary" id="btnRtJoin">참가 코드 만들기</button>
+          <label class="rt-label" for="rtGuestCode">내 참가 코드</label>
+          <textarea class="rt-code" id="rtGuestCode" readonly rows="4" placeholder="참가 코드 만들기를 누르면 여기에 코드가 생겨요" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+          <button type="button" class="rt-btn2" id="btnRtCopyGuest">참가 코드 복사</button>
+        </details>
        </div>
         <button type="button" class="close" id="btnCloseRt">닫기</button>
       </div>
@@ -1243,12 +1291,14 @@
         if (e.target === this) this.classList.remove("show");
       });
 
-      /* ───────────────── 실시간 (WebRTC, 서버 없음) ─────────────────
-         수동 시그널링: 코드를 복사해서 카톡 등으로 주고받으면 두 브라우저가
-         직접 연결돼요. 상태는 기존 encode/decode 문자열 그대로 주고받습니다.
+      /* ───────────────── 실시간 (WebRTC) ─────────────────
+         기본은 4자리 방 코드 + PeerJS 무료 중계(0.peerjs.com): 중계는
+         두 폰을 소개만 하고, 대국 데이터는 두 폰끼리 직접 주고받아요.
+         중계가 안 되면 "직접 코드로 연결하기" 수동 SDP 방식을 쓰세요.
+         상태는 기존 encode/decode 문자열 그대로 주고받습니다.
       ──────────────────────────────────────── */
       var RT_STUN = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
-      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null };
+      var rt = { pc: null, dc: null, role: null, myColor: 0, connected: false, waiting: false, failTimer: null, peer: null, conn: null, roomCode: "" };
 
       function rtSetState(msg) {
         var el = $("rtConnState");
@@ -1291,8 +1341,12 @@
         });
       }
       function rtBroadcast() {
+        var payload = JSON.stringify({ t: "state", s: encode(S) });
         if (rt.dc && rt.dc.readyState === "open") {
-          try { rt.dc.send(JSON.stringify({ t: "state", s: encode(S) })); } catch (e) { /* 무시 */ }
+          try { rt.dc.send(payload); } catch (e) { /* 무시 */ }
+        }
+        if (rt.conn && rt.conn.open) {
+          try { rt.conn.send(payload); } catch (e) { /* 무시 */ }
         }
       }
       function rtApplyState(code) {
@@ -1352,9 +1406,115 @@
         rtStopFailTimer();
         if (rt.dc) { try { rt.dc.close(); } catch (e) {} rt.dc = null; }
         if (rt.pc) { try { rt.pc.close(); } catch (e) {} rt.pc = null; }
+        if (rt.conn) { try { rt.conn.close(); } catch (e) {} rt.conn = null; }
+        if (rt.peer) { try { rt.peer.destroy(); } catch (e) {} rt.peer = null; }
+        rt.roomCode = "";
+        var rc = $("rtRoomCode"); if (rc) rc.textContent = "----";
         rt.connected = false;
         if (!keepRole) { rt.role = null; rt.myColor = 0; }
         rtUpdateStatus();
+      }
+      /* ── 4자리 방 코드 (PeerJS 중계) ── */
+      var PEERJS_URLS = [
+        "https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js",
+        "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
+      ];
+      function loadPeerJS() {
+        return new Promise(function (resolve, reject) {
+          if (window.Peer) { resolve(); return; }
+          var i = 0;
+          (function next() {
+            if (i >= PEERJS_URLS.length) { reject(new Error("peerjs load fail")); return; }
+            var s = document.createElement("script");
+            s.src = PEERJS_URLS[i++];
+            s.onload = function () { if (window.Peer) resolve(); else next(); };
+            s.onerror = next;
+            document.head.appendChild(s);
+          })();
+        });
+      }
+      function genRoomCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
+      function isValidRoomCode(s) { return /^\d{4}$/.test(String(s == null ? "" : s).trim()); }
+      function rtWirePeerConn(conn) {
+        if (rt.connected && rt.conn && rt.conn !== conn) { try { conn.close(); } catch (e) {} return; }
+        rt.conn = conn;
+        conn.on("open", function () {
+          rt.connected = true;
+          rtStopFailTimer();
+          rtSetState("연결됨");
+          showHint("실시간 연결됐어요.");
+          if (rt.role === "host") rtBroadcast();
+        });
+        conn.on("data", function (data) {
+          var msg = null;
+          try { msg = (typeof data === "string") ? JSON.parse(data) : data; } catch (e) { msg = null; }
+          if (msg && msg.t === "state" && typeof msg.s === "string") rtApplyState(msg.s);
+        });
+        conn.on("close", function () { rtOnClosed(); });
+        conn.on("error", function () { /* close가 뒤따름 */ });
+      }
+      function rtCreateRoomPeerJS() {
+        if (rt.connected) { showHint("이미 연결돼 있어요."); return; }
+        rtSetState("방 만드는 중…");
+        loadPeerJS().then(function () {
+          rtReset(true);
+          rt.role = "host"; rt.myColor = 1;
+          var tries = 0;
+          (function tryCreate() {
+            tries++;
+            var code = genRoomCode();
+            var peer = new Peer(code);
+            var opened = false;
+            peer.on("open", function (id) {
+              opened = true;
+              rt.peer = peer;
+              rt.roomCode = id;
+              var rc = $("rtRoomCode"); if (rc) rc.textContent = id;
+              rtSetState("방 코드가 만들어졌어요. 코드를 친구에게 알려주세요.");
+            });
+            peer.on("connection", function (conn) { rtWirePeerConn(conn); });
+            peer.on("error", function (err) {
+              if (opened) { rtSetState("연결 중에 문제가 생겼어요. 방을 다시 만들어 주세요."); return; }
+              try { peer.destroy(); } catch (e) {}
+              if (err && err.type === "unavailable-id" && tries < 10) { tryCreate(); return; }
+              rtSetState("방을 만들지 못했어요. 다시 시도해 주세요. 안 되면 아래 '직접 코드로 연결하기'를 써 보세요.");
+              rtReset(false);
+            });
+          })();
+        }).catch(function () {
+          rtSetState("중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+        });
+      }
+      function rtJoinPeerJS() {
+        if (rt.connected) { showHint("이미 연결돼 있어요."); return; }
+        var code = ($("rtJoinCode").value || "").replace(/\D/g, "").slice(0, 4);
+        if (!isValidRoomCode(code)) { rtSetState("방 코드는 숫자 4자리예요. 코드를 다시 확인해 주세요."); return; }
+        rtSetState("방에 들어가는 중…");
+        loadPeerJS().then(function () {
+          rtReset(true);
+          rt.role = "guest"; rt.myColor = 2;
+          var peer = new Peer();
+          var conn = null;
+          var failed = false;
+          function fail(msg) {
+            if (failed) return; failed = true;
+            rtStopFailTimer();
+            rtSetState(msg);
+            rtReset(false);
+          }
+          peer.on("open", function () {
+            rt.peer = peer;
+            conn = peer.connect(code, { reliable: true });
+            rtWirePeerConn(conn);
+            rtStartFailTimer();
+          });
+          peer.on("error", function (err) {
+            if (err && err.type === "peer-unavailable") fail("방 코드를 다시 확인해 주세요. 그런 방이 없어요.");
+            else if (err && err.type === "network") fail("중계 서버에 닿지 않아요. 다시 시도해 주세요.");
+          });
+        }).catch(function () {
+          rtSetState("중계 서버에 닿지 않아요. 아래 '직접 코드로 연결하기'를 써 보세요.");
+        });
       }
       function rtCreateRoom() {
         if (!window.RTCPeerConnection) { rtSetState("이 브라우저는 실시간 연결을 지원하지 않아요. 링크 공유 방식으로 두면 돼요."); return; }
@@ -1414,26 +1574,62 @@
         $("rtAnswerIn").value = "";
         $("rtOfferIn").value = "";
         $("rtGuestCode").value = "";
+        var jc = $("rtJoinCode"); if (jc) jc.value = "";
         rtSetState("연결을 끊었어요. 로컬 모드로 돌아갑니다.");
         showHint("연결을 끊었어요.");
       }
+      /* ── 복사 (iOS 사파리 대응) ──
+         1) navigator.clipboard 2) 임시 편집 가능 textarea + execCommand
+         3) 안 되면 보이는 코드를 직접 선택 상태로 만들고 길게 눌러 복사 안내 */
+      function copyText(text, selectEl) {
+        if (!text) { showHint("복사할 코드가 없어요."); return; }
+        function done(ok) {
+          if (ok) { showHint("복사했어요."); return; }
+          selectForManualCopy(selectEl);
+          showHint("복사가 안 돼요. 코드를 길게 눌러 직접 복사해 주세요.");
+        }
+        function legacyCopy() {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.top = "0"; ta.style.left = "0";
+          ta.style.opacity = "0";
+          ta.style.fontSize = "16px";
+          document.body.appendChild(ta);
+          ta.focus();
+          try { ta.setSelectionRange(0, ta.value.length); } catch (e) {}
+          var ok = false;
+          try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+          document.body.removeChild(ta);
+          done(ok);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () { done(true); }, function () { legacyCopy(); });
+        } else { legacyCopy(); }
+      }
+      function selectForManualCopy(el) {
+        if (!el) return;
+        try {
+          if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+            el.readOnly = false;
+            el.focus();
+            el.setSelectionRange(0, el.value.length);
+          } else if (window.getSelection && document.createRange) {
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        } catch (e) { /* 무시 */ }
+      }
       function rtCopy(textareaId) {
         var ta = $(textareaId);
-        var text = ta.value;
-        if (!text) { showHint("복사할 코드가 없어요."); return; }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function () {
-            showHint("복사했어요.");
-          }, function () { rtFallbackCopy(ta); });
-        } else { rtFallbackCopy(ta); }
+        copyText(ta.value, ta);
       }
-      function rtFallbackCopy(ta) {
-        try {
-          ta.focus(); ta.select();
-          var ok = document.execCommand("copy");
-          showHint(ok ? "복사했어요." : "복사가 안 돼요. 코드를 길게 눌러 직접 복사해 주세요.");
-          if (window.getSelection) window.getSelection().removeAllRanges();
-        } catch (e) { showHint("복사가 안 돼요. 코드를 길게 눌러 직접 복사해 주세요."); }
+      function rtCopyRoom() {
+        if (!rt.roomCode) { showHint("복사할 코드가 없어요. 먼저 방 만들기를 눌러 주세요."); return; }
+        copyText(rt.roomCode, $("rtRoomCode"));
       }
 
       /* 실시간 패널 버튼 */
@@ -1446,6 +1642,19 @@
       $("btnRtDisconnect").addEventListener("click", rtDisconnect);
       $("btnRtCopyHost").addEventListener("click", function () { rtCopy("rtHostCode"); });
       $("btnRtCopyGuest").addEventListener("click", function () { rtCopy("rtGuestCode"); });
+      $("btnRtRoom").addEventListener("click", rtCreateRoomPeerJS);
+      $("btnRtJoinPeer").addEventListener("click", rtJoinPeerJS);
+      $("btnRtCopyRoom").addEventListener("click", rtCopyRoom);
+      $("rtRoomCode").addEventListener("click", rtCopyRoom);
+      $("rtRoomCode").addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rtCopyRoom(); }
+      });
+      $("rtJoinCode").addEventListener("input", function () {
+        this.value = this.value.replace(/\D/g, "").slice(0, 4);
+      });
+      $("rtJoinCode").addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); rtJoinPeerJS(); }
+      });
 
       /* ───────────────── 초기화 ───────────────── */
       function loadFromHash() {
